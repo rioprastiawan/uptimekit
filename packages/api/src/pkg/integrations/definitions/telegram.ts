@@ -1,5 +1,6 @@
 import { db } from "@uptimekit/db";
 import type { z } from "zod";
+import { formatDuration } from "../../../lib/duration";
 import { createLogger } from "../../../lib/logger";
 import { fetchIntegrationWebhook } from "../http";
 import type { IntegrationDefinition } from "../registry";
@@ -130,6 +131,18 @@ export const telegramIntegration: IntegrationDefinition<
 
             const incidentUrl = `${baseUrl}/incidents/${payload.incidentId}`;
 
+            const durationLine =
+                event === "incident.resolved" &&
+                incidentData?.startedAt &&
+                incidentData?.resolvedAt
+                    ? [
+                          `<b>Duration:</b> ${formatDuration(
+                              incidentData.resolvedAt.getTime() -
+                                  incidentData.startedAt.getTime(),
+                          )}`,
+                      ]
+                    : [];
+
             // Determine Content based on Event
             let statusHeader = "";
             let reasonContent = "";
@@ -165,6 +178,7 @@ export const telegramIntegration: IntegrationDefinition<
                 statusHeader,
                 "",
                 `<b>Monitors:</b> ${monitorNames}`,
+                ...durationLine,
                 "<b>Details:</b>",
                 `<pre>${reasonContent}</pre>`,
                 "",

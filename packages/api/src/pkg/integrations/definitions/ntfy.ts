@@ -1,4 +1,5 @@
 import { db } from "@uptimekit/db";
+import { formatDuration } from "../../../lib/duration";
 import { createLogger } from "../../../lib/logger";
 import { assertSafePublicHttpUrl } from "../../../lib/safe-url";
 import { fetchIntegrationWebhook } from "../http";
@@ -176,12 +177,24 @@ async function buildIncidentMessage(
         incidentData?.monitors.map((item) => item.monitor.name).join(", ") ||
         "No monitors";
     const copy = getIncidentCopy(event, payload);
+    const durationLine =
+        event === "incident.resolved" &&
+        incidentData?.startedAt &&
+        incidentData?.resolvedAt
+            ? [
+                  `Duration: ${formatDuration(
+                      incidentData.resolvedAt.getTime() -
+                          incidentData.startedAt.getTime(),
+                  )}`,
+              ]
+            : [];
 
     return {
         title: `${copy.title}: ${incidentTitle}`,
         message: [
             `Severity: ${payload.severity || "Unknown"}`,
             `Monitors: ${monitorNames}`,
+            ...durationLine,
             "",
             copy.detail,
         ].join("\n"),

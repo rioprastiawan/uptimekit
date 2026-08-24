@@ -1,5 +1,6 @@
 import { db } from "@uptimekit/db";
 import nodemailer from "nodemailer";
+import { formatDuration } from "../../../lib/duration";
 import { createLogger } from "../../../lib/logger";
 import type { IntegrationDefinition } from "../registry";
 import { type SmtpConfig, smtpIntegrationMeta } from "./smtp-meta";
@@ -236,6 +237,19 @@ async function buildIncidentMail(
         ["Incident", incidentTitle],
         ["Severity", payload.severity || "Unknown"],
         ["Monitors", monitorNames],
+        ...(event === "incident.resolved" &&
+        incidentData?.startedAt &&
+        incidentData?.resolvedAt
+            ? [
+                  [
+                      "Duration",
+                      formatDuration(
+                          incidentData.resolvedAt.getTime() -
+                              incidentData.startedAt.getTime(),
+                      ),
+                  ],
+              ]
+            : []),
     ];
 
     const text = [

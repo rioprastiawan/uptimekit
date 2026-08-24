@@ -1,5 +1,6 @@
-import type { z } from "zod";
 import { db } from "@uptimekit/db";
+import type { z } from "zod";
+import { formatDuration } from "../../../lib/duration";
 import { createLogger } from "../../../lib/logger";
 import { fetchIntegrationWebhook } from "../http";
 import type { IntegrationDefinition } from "../registry";
@@ -41,7 +42,9 @@ function decoratedText(
 }
 
 function linkButton(text: string, url: string): GchatWidget {
-    return { buttonList: { buttons: [{ text, onClick: { openLink: { url } } }] } };
+    return {
+        buttonList: { buttons: [{ text, onClick: { openLink: { url } } }] },
+    };
 }
 
 async function sendGchatMessage(webhookUrl: string, message: GchatCardMessage) {
@@ -223,11 +226,25 @@ export const gchatIntegration: IntegrationDefinition<
                 process.env.NEXT_PUBLIC_URL || "http://localhost:3000";
 
             const monitorNames =
-                incidentData?.monitors
-                    .map((m) => m.monitor.name)
-                    .join(", ") || "No monitors";
+                incidentData?.monitors.map((m) => m.monitor.name).join(", ") ||
+                "No monitors";
 
             const incidentUrl = `${baseUrl}/incidents/${payload.incidentId}`;
+
+            const durationWidgets: GchatWidget[] =
+                event === "incident.resolved" &&
+                incidentData?.startedAt &&
+                incidentData?.resolvedAt
+                    ? [
+                          decoratedText(
+                              "Duration",
+                              formatDuration(
+                                  incidentData.resolvedAt.getTime() -
+                                      incidentData.startedAt.getTime(),
+                              ),
+                          ),
+                      ]
+                    : [];
 
             let title = "";
             let detailsLabel = "Description";
@@ -300,6 +317,7 @@ export const gchatIntegration: IntegrationDefinition<
                                             monitorNames,
                                             true,
                                         ),
+                                        ...durationWidgets,
                                         decoratedText(
                                             detailsLabel,
                                             detailsContent,

@@ -1,5 +1,6 @@
 import { db } from "@uptimekit/db";
 import type { z } from "zod";
+import { formatDuration } from "../../../lib/duration";
 import { createLogger } from "../../../lib/logger";
 import { fetchIntegrationWebhook } from "../http";
 import type { IntegrationDefinition } from "../registry";
@@ -117,6 +118,18 @@ export const appriseIntegration: IntegrationDefinition<
 
             const incidentUrl = `${baseUrl}/incidents/${payload.incidentId}`;
 
+            const durationLine =
+                event === "incident.resolved" &&
+                incidentData?.startedAt &&
+                incidentData?.resolvedAt
+                    ? [
+                          `Duration: ${formatDuration(
+                              incidentData.resolvedAt.getTime() -
+                                  incidentData.startedAt.getTime(),
+                          )}`,
+                      ]
+                    : [];
+
             // Determine Content based on Event
             let statusHeader = "";
             let reasonLabel = "Details:";
@@ -152,6 +165,7 @@ export const appriseIntegration: IntegrationDefinition<
 
             const body = [
                 `Monitors: ${monitorNames}`,
+                ...durationLine,
                 "",
                 reasonLabel,
                 reasonContent,

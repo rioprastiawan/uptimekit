@@ -7,6 +7,7 @@ import {
     pgTable,
     text,
     timestamp,
+    uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 export const user = pgTable("user", {
@@ -69,7 +70,13 @@ export const account = pgTable(
             .$onUpdate(() => /* @__PURE__ */ new Date())
             .notNull(),
     },
-    (table) => [index("account_userId_idx").on(table.userId)],
+    (table) => [
+        index("account_userId_idx").on(table.userId),
+        uniqueIndex("account_providerId_accountId_uidx").on(
+            table.providerId,
+            table.accountId,
+        ),
+    ],
 );
 
 export const verification = pgTable(
@@ -98,6 +105,10 @@ export const twoFactor = pgTable(
             .notNull()
             .references(() => user.id, { onDelete: "cascade" }),
         verified: boolean("verified").default(true),
+        failedVerificationCount: integer("failed_verification_count").default(
+            0,
+        ),
+        lockedUntil: timestamp("locked_until"),
     },
     (table) => [index("twoFactor_userId_idx").on(table.userId)],
 );

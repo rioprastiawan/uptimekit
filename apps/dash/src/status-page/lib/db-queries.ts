@@ -9,6 +9,10 @@ import {
     timeseries,
 } from "@uptimekit/db";
 import { monitor } from "@uptimekit/db/schema/monitors";
+import {
+    statusPageReport,
+    statusPageReportUpdate,
+} from "@uptimekit/db/schema/status-updates";
 // ... imports
 import {
     and,
@@ -24,6 +28,10 @@ import {
     sql,
 } from "drizzle-orm";
 import { cache } from "react";
+import {
+    normalizeMonitorDisplayName,
+    resolveMonitorDisplayName,
+} from "@/lib/status-page-monitor-name";
 import {
     getIncidentHistoryCutoff,
     type IncidentHistoryPeriod,
@@ -64,6 +72,35 @@ async function withRetry<T>(
     }
     throw lastError;
 }
+
+const getStatusPageMonitorDisplayNames = cache(
+    async (statusPageId: string): Promise<Map<string, string>> => {
+        const rows = await db
+            .select({
+                monitorId: statusPageMonitor.monitorId,
+                displayName: statusPageMonitor.displayName,
+            })
+            .from(statusPageMonitor)
+            .where(
+                and(
+                    eq(statusPageMonitor.statusPageId, statusPageId),
+                    isNotNull(statusPageMonitor.displayName),
+                ),
+            );
+
+        return new Map(
+            rows.flatMap((row) => {
+                const displayName = normalizeMonitorDisplayName(
+                    row.displayName,
+                );
+
+                return displayName
+                    ? ([[row.monitorId, displayName]] as const)
+                    : [];
+            }),
+        );
+    },
+);
 
 async function getPublishedIncidentRecords(
     statusPageId: string,
@@ -127,60 +164,177 @@ async function getPublishedIncidentRecords(
 
     const incidentIds = (await incidentIdsQuery).map((row) => row.incidentId);
 
-    if (incidentIds.length === 0) {
-        return [];
+    const records =
+        incidentIds.length === 0
+            ? []
+            : await db.query.incidentStatusPage.findMany({
+                  columns: {
+                      incidentId: true,
+                      statusPageId: true,
+                  },
+                  where: and(
+                      eq(incidentStatusPage.statusPageId, statusPageId),
+                      inArray(incidentStatusPage.incidentId, incidentIds),
+                  ),
+                  with: {
+                      incident: {
+                          columns: {
+                              id: true,
+                              title: true,
+                              status: true,
+                              severity: true,
+                              description: true,
+                              startedAt: true,
+                              plannedEndAt: true,
+                              endedAt: true,
+                              createdAt: true,
+                          },
+                          with: {
+                              monitors: {
+                                  columns: {
+                                      incidentId: true,
+                                      monitorId: true,
+                                  },
+                                  with: {
+                                      monitor: {
+                                          columns: {
+                                              id: true,
+                                              name: true,
+                                          },
+                                      },
+                                  },
+                              },
+                              activities: {
+                                  columns: {
+                                      id: true,
+                                      message: true,
+                                      type: true,
+                                      createdAt: true,
+                                  },
+                                  orderBy: [desc(incidentActivity.createdAt)],
+                              },
+                          },
+                      },
+                  },
+              });
+
+    const legacyFilters = [
+        eq(statusPageReport.statusPageId, statusPageId),
+        options?.maintenanceOnly
+            ? eq(statusPageReport.severity, "maintenance")
+            : ne(statusPageReport.severity, "maintenance"),
+    ];
+
+    if (options?.activeOnly) {
+        legacyFilters.push(isNull(statusPageReport.resolvedAt));
     }
 
-    return db.query.incidentStatusPage.findMany({
-        columns: {
-            incidentId: true,
-            statusPageId: true,
-        },
-        where: and(
-            eq(incidentStatusPage.statusPageId, statusPageId),
-            inArray(incidentStatusPage.incidentId, incidentIds),
-        ),
+    if (options?.resolvedOnly) {
+        legacyFilters.push(isNotNull(statusPageReport.resolvedAt));
+    }
+
+    if (options?.cutoff) {
+        const cutoffFilter = or(
+            gte(statusPageReport.createdAt, options.cutoff),
+            isNull(statusPageReport.resolvedAt),
+            gte(statusPageReport.resolvedAt, options.cutoff),
+        );
+        if (cutoffFilter) {
+            legacyFilters.push(cutoffFilter);
+        }
+    }
+
+    const legacyReports = await db.query.statusPageReport.findMany({
+        where: and(...legacyFilters),
+        orderBy: [
+            desc(
+                options?.sortBy === "endedAt"
+                    ? statusPageReport.resolvedAt
+                    : statusPageReport.createdAt,
+            ),
+        ],
         with: {
-            incident: {
-                columns: {
-                    id: true,
-                    title: true,
-                    status: true,
-                    severity: true,
-                    description: true,
-                    startedAt: true,
-                    plannedEndAt: true,
-                    endedAt: true,
-                    createdAt: true,
-                },
+            updates: {
+                orderBy: [
+                    desc(statusPageReportUpdate.createdAt),
+                    desc(statusPageReportUpdate.id),
+                ],
+            },
+            affectedMonitors: {
                 with: {
-                    monitors: {
-                        columns: {
-                            incidentId: true,
-                            monitorId: true,
-                        },
-                        with: {
-                            monitor: {
-                                columns: {
-                                    id: true,
-                                    name: true,
-                                },
-                            },
-                        },
-                    },
-                    activities: {
+                    monitor: {
                         columns: {
                             id: true,
-                            message: true,
-                            type: true,
-                            createdAt: true,
+                            name: true,
                         },
-                        orderBy: [desc(incidentActivity.createdAt)],
                     },
                 },
             },
         },
     });
+
+    const legacyRecords = legacyReports.map((report) => ({
+        incidentId: report.id,
+        statusPageId: report.statusPageId,
+        incident: {
+            id: report.id,
+            title: report.title,
+            status: report.status,
+            severity: report.severity,
+            description: null,
+            startedAt: report.createdAt,
+            plannedEndAt: null,
+            endedAt: report.resolvedAt,
+            createdAt: report.createdAt,
+            monitors: report.affectedMonitors.map((item) => ({
+                incidentId: report.id,
+                monitorId: item.monitorId,
+                monitor: item.monitor,
+            })),
+            activities: report.updates.map((update) => ({
+                id: update.id,
+                message: update.message,
+                type: "update",
+                createdAt: update.createdAt,
+            })),
+        },
+    }));
+
+    const allRecords = [...records, ...legacyRecords].sort((a, b) => {
+        const aDate =
+            options?.sortBy === "endedAt"
+                ? a.incident.endedAt
+                : a.incident.startedAt;
+        const bDate =
+            options?.sortBy === "endedAt"
+                ? b.incident.endedAt
+                : b.incident.startedAt;
+        return (bDate?.getTime() ?? 0) - (aDate?.getTime() ?? 0);
+    });
+
+    const limitedRecords = options?.limit
+        ? allRecords.slice(0, options.limit)
+        : allRecords;
+
+    const displayNames = await getStatusPageMonitorDisplayNames(statusPageId);
+
+    if (displayNames.size === 0) {
+        return limitedRecords;
+    }
+
+    return limitedRecords.map((record) => ({
+        ...record,
+        incident: {
+            ...record.incident,
+            monitors: record.incident.monitors.map((item) => ({
+                ...item,
+                monitor: {
+                    ...item.monitor,
+                    name: displayNames.get(item.monitorId) ?? item.monitor.name,
+                },
+            })),
+        },
+    }));
 }
 
 function mapPublishedIncidentRecord(
@@ -270,6 +424,7 @@ async function getStatusPageMonitorRecords(statusPageId: string) {
             monitorId: true,
             groupId: true,
             style: true,
+            displayName: true,
             description: true,
             order: true,
         },
@@ -296,10 +451,21 @@ async function getStatusPageMonitorRecords(statusPageId: string) {
         orderBy: [asc(statusPageMonitor.order)],
     });
 
-    const monitorIds = records.map((record) => record.monitor.id);
+    const withDisplayNames = records.map((record) => ({
+        ...record,
+        monitor: {
+            ...record.monitor,
+            name: resolveMonitorDisplayName({
+                name: record.monitor.name,
+                displayName: record.displayName,
+            }),
+        },
+    }));
+
+    const monitorIds = withDisplayNames.map((record) => record.monitor.id);
 
     if (monitorIds.length === 0) {
-        return records;
+        return withDisplayNames;
     }
 
     const externalMonitorConfigs = await db
@@ -318,7 +484,7 @@ async function getStatusPageMonitorRecords(statusPageId: string) {
         externalMonitorConfigs.map((record) => [record.id, record.config]),
     );
 
-    return records.map((record) => ({
+    return withDisplayNames.map((record) => ({
         ...record,
         monitor: {
             ...record.monitor,

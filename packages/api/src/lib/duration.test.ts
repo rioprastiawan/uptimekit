@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDuration } from "./duration";
+import { formatDuration, getResolvedIncidentDuration } from "./duration";
 
 describe("formatDuration", () => {
     it("formats sub-minute durations as 0m", () => {
@@ -26,5 +26,34 @@ describe("formatDuration", () => {
 
     it("clamps negative durations to 0m", () => {
         expect(formatDuration(-5000)).toBe("0m");
+    });
+});
+
+describe("getResolvedIncidentDuration", () => {
+    const timeline = {
+        startedAt: "2026-01-01T10:00:00.000Z",
+        resolvedAt: "2026-01-01T12:15:00.000Z",
+    };
+
+    it("formats the timeline carried by a resolved event", () => {
+        expect(getResolvedIncidentDuration("incident.resolved", timeline)).toBe(
+            "2h 15m",
+        );
+    });
+
+    it("ignores events other than incident.resolved", () => {
+        expect(
+            getResolvedIncidentDuration("incident.created", timeline),
+        ).toBeNull();
+    });
+
+    it("returns null when the timeline is missing or invalid", () => {
+        expect(getResolvedIncidentDuration("incident.resolved", {})).toBeNull();
+        expect(
+            getResolvedIncidentDuration("incident.resolved", {
+                ...timeline,
+                resolvedAt: "not-a-date",
+            }),
+        ).toBeNull();
     });
 });

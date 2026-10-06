@@ -1,6 +1,6 @@
 import { db } from "@uptimekit/db";
 import type { z } from "zod";
-import { formatDuration } from "../../../lib/duration";
+import { getResolvedIncidentDuration } from "../../../lib/duration";
 import { fetchIntegrationWebhook } from "../http";
 import type { IntegrationDefinition } from "../registry";
 import {
@@ -221,21 +221,17 @@ export const discordIntegration: IntegrationDefinition<
         const timeString = `<t:${timestamp}:T>`;
         const incidentUrl = `${baseUrl}/incidents/${payload.incidentId}`;
 
-        const durationFields =
-            event === "incident.resolved" &&
-            incidentData?.startedAt &&
-            incidentData?.resolvedAt
-                ? [
-                      {
-                          name: "`⏱️` Duration",
-                          value: formatDuration(
-                              incidentData.resolvedAt.getTime() -
-                                  incidentData.startedAt.getTime(),
-                          ),
-                          inline: true,
-                      },
-                  ]
-                : [];
+        const duration = getResolvedIncidentDuration(event, payload);
+
+        const durationFields = duration
+            ? [
+                  {
+                      name: "`⏱️` Duration",
+                      value: duration,
+                      inline: true,
+                  },
+              ]
+            : [];
 
         // Determine Embed Content based on Event
         let statusHeader = "";

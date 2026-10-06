@@ -11,3 +11,23 @@ export function formatDuration(ms: number) {
 
     return parts.join(" ");
 }
+
+interface ResolvedIncidentTimeline {
+    startedAt?: unknown;
+    resolvedAt?: unknown;
+}
+
+export function getResolvedIncidentDuration(
+    event: string,
+    payload: ResolvedIncidentTimeline,
+) {
+    if (event !== "incident.resolved") return null;
+    if (typeof payload.startedAt !== "string") return null;
+    if (typeof payload.resolvedAt !== "string") return null;
+
+    const startedAtMs = Date.parse(payload.startedAt);
+    const resolvedAtMs = Date.parse(payload.resolvedAt);
+    if (Number.isNaN(startedAtMs) || Number.isNaN(resolvedAtMs)) return null;
+
+    return formatDuration(resolvedAtMs - startedAtMs);
+}
